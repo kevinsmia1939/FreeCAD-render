@@ -31,6 +31,7 @@ FreeCAD graphical user interface.
 import threading
 import shlex
 import traceback
+from concurrent.futures import Future
 from subprocess import Popen, PIPE, STDOUT, SubprocessError
 
 from PySide.QtCore import (
@@ -265,20 +266,34 @@ class RendererExecutorCli(threading.Thread):
         self.worker.run()
 
 
-def exec_in_mainthread(func, *args):
+def exec_in_mainthread(func, args=()):
     """Execute a function in the main thread.
 
     Some methods of FreeCAD API require to be executed in main thread.
     This function provides a way to do so.
     """
-    worker = ExporterWorker(func, *args)
+    if not App.GuiUp:
+        return func(*args)
+
     main_thread = QCoreApplication.instance().thread()
-    loop = QEventLoop()
-    worker.finished.connect(loop.quit)
+    if QThread.currentThread() == main_thread:
+        return func(*args)
+
+    # ThreadPoolExecutor threads have no Qt event loop. Wait on a Future
+    # instead, and propagate exceptions back to the calling export worker.
+    result = Future()
+
+    def run():
+        try:
+            result.set_result(func(*args))
+        except BaseException as exc:
+            result.set_exception(exc)
+
+    worker = ExporterWorker(run, ())
     worker.moveToThread(main_thread)
+    worker.finished.connect(worker.deleteLater)
     QMetaObject.invokeMethod(worker, "run", Qt.QueuedConnection)
-    loop.exec_()
-    return worker.result()
+    return result.result()
 
 
 RendererExecutor = RendererExecutorGui if App.GuiUp else RendererExecutorCli

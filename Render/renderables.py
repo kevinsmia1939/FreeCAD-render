@@ -652,10 +652,11 @@ def _get_rends_from_window(obj, name, material, mesher, **kwargs):
         # Subobjects colors
         transparency_boost = kwargs.get("transparency_boost", 0)
         faces_len = [len(s.Faces) for s in obj.Shape.Solids]
-        if obj.ViewObject is not None:  # Gui is up
+        diffuse_colors = _get_diffuse_colors(obj)
+        if diffuse_colors is not None:  # Gui is up
             colors = [
                 _boost_tp(
-                    RGB.from_fcd_rgba(obj.ViewObject.DiffuseColor[i]),
+                    RGB.from_fcd_rgba(diffuse_colors[i]),
                     transparency_boost,
                 )
                 for i in itertools.accumulate([0] + faces_len[:-1])
@@ -716,10 +717,11 @@ def _get_rends_from_window(obj, name, material, mesher, **kwargs):
     # Adjust colors
     transparency_boost = kwargs.get("transparency_boost", 0)
     faces_len = [len(s.Faces) for s in obj.Shape.Solids]
-    if obj.ViewObject is not None:  # Gui is up
+    diffuse_colors = _get_diffuse_colors(obj)
+    if diffuse_colors is not None:  # Gui is up
         colors = [
             _boost_tp(
-                RGB.from_fcd_rgba(obj.ViewObject.DiffuseColor[i]),
+                RGB.from_fcd_rgba(diffuse_colors[i]),
                 transparency_boost,
             )
             for i in itertools.accumulate([0] + faces_len[:-1])
@@ -879,10 +881,7 @@ def _get_rends_from_partfeature(obj, name, material, mesher, **kwargs):
     Returns:
         A list of renderables for the Part object
     """
-    try:
-        colors = obj.ViewObject.DiffuseColor
-    except AttributeError:
-        colors = []
+    colors = _get_diffuse_colors(obj) or ()
 
     uvprojection = kwargs.get("uvprojection")
 
@@ -984,8 +983,28 @@ def _get_material(base_renderable, upper_material):
     )
 
 
+def _get_diffuse_colors(obj):
+    """Copy face colors on the GUI thread before using them in workers."""
+
+    def read_colors():
+        vobj = obj.ViewObject
+        if vobj is None:
+            return None
+        return tuple(getattr(vobj, "DiffuseColor", ()))
+
+    return exec_in_mainthread(read_colors)
+
+
 def _get_shapecolor(obj, transparency_boost, default_color=None):
     """Get shape color (including transparency) from an object."""
+    return exec_in_mainthread(
+        _get_shapecolor_mainthread,
+        (obj, transparency_boost, default_color),
+    )
+
+
+def _get_shapecolor_mainthread(obj, transparency_boost, default_color):
+    """Read view-provider colors exclusively on the main thread."""
     default_color = default_color or WHITE
 
     # Is there a view object? (console mode, for instance)

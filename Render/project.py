@@ -46,7 +46,12 @@ import FreeCADGui as Gui
 
 from Render.constants import TEMPLATEDIR, PARAMS, FCDVERSION
 from Render.rdrhandler import RendererHandler, RendererNotFoundError
-from Render.rdrexecutor import RendererExecutor, RendererWorker, ExporterWorker
+from Render.rdrexecutor import (
+    RendererExecutor,
+    RendererWorker,
+    ExporterWorker,
+    exec_in_mainthread,
+)
 from Render.utils import (
     translate,
     set_last_cmd,
@@ -889,7 +894,9 @@ def _get_objstrings_worker(get_rdr_string, views, multithreaded=True):
     """Get strings from renderer (worker)."""
     try:
         if App.GuiUp:
-            QApplication.setOverrideCursor(Qt.WaitCursor)
+            exec_in_mainthread(
+                QApplication.setOverrideCursor, (Qt.WaitCursor,)
+            )
 
         App.Console.PrintMessage(
             "[Render][Objstrings] STARTING OBJECTS EXPORT\n"
@@ -949,6 +956,6 @@ def _get_objstrings_worker(get_rdr_string, views, multithreaded=True):
         objstrings = []
     finally:
         if App.GuiUp:
-            QApplication.restoreOverrideCursor()
+            exec_in_mainthread(QApplication.restoreOverrideCursor)
 
     return objstrings
