@@ -41,7 +41,6 @@ from PySide.QtCore import (
     QObject,
     QCoreApplication,
     QEventLoop,
-    QMetaObject,
     Qt,
 )
 
@@ -266,6 +265,27 @@ class RendererExecutorCli(threading.Thread):
         self.worker.run()
 
 
+class _MainThreadInvoker(QObject):
+    """Dispatch callbacks to the GUI thread without per-call QObjects."""
+
+    request = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.request.connect(self._execute, Qt.QueuedConnection)
+
+    @Slot(object)
+    def _execute(self, request):
+        func, args, result = request
+        try:
+            result.set_result(func(*args))
+        except BaseException as exc:
+            result.set_exception(exc)
+
+
+_main_thread_invoker = _MainThreadInvoker()
+
+
 def exec_in_mainthread(func, args=()):
     """Execute a function in the main thread.
 
@@ -279,20 +299,10 @@ def exec_in_mainthread(func, args=()):
     if QThread.currentThread() == main_thread:
         return func(*args)
 
-    # ThreadPoolExecutor threads have no Qt event loop. Wait on a Future
-    # instead, and propagate exceptions back to the calling export worker.
+    # ThreadPoolExecutor threads have no Qt event loop, so dispatch through a
+    # persistent QObject whose signal is connected to its main-thread slot.
     result = Future()
-
-    def run():
-        try:
-            result.set_result(func(*args))
-        except BaseException as exc:
-            result.set_exception(exc)
-
-    worker = ExporterWorker(run, ())
-    worker.moveToThread(main_thread)
-    worker.finished.connect(worker.deleteLater)
-    QMetaObject.invokeMethod(worker, "run", Qt.QueuedConnection)
+    _main_thread_invoker.request.emit((func, args, result))
     return result.result()
 
 
